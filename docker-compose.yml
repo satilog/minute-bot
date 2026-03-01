@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minute-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Supabase
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SAVE_AUDIO_TO_STORAGE=true
+      # Processing
+      - WHISPER_MODEL=base
+      - LANGUAGE=en
+      - TRANSCRIPTION_BUFFER_DURATION=5.0
+      - DIARIZATION_BUFFER_DURATION=30.0
+      - MIN_SPEAKERS=1
+      - MAX_SPEAKERS=10
+      # HuggingFace
+      - HF_TOKEN=${HF_TOKEN:-}
+      # Server
+      - PORT=5000
+      - DEBUG=false
+    volumes:
+      - whisper_cache:/root/.cache/whisper
+      - huggingface_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  redis_data:
+  whisper_cache:
+  huggingface_cache:
