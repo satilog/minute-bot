@@ -50,12 +50,29 @@ class AudioCapture:
         return self._session_id
 
     def _detect_capture_rate(self, p: pyaudio.PyAudio) -> int:
-        """Return the default input device's native sample rate."""
+        """Return a sample rate that the default input device actually supports."""
+        _CANDIDATE_RATES = [48000, 44100, 22050, 16000, 8000]
         try:
             info = p.get_default_input_device_info()
-            return int(info["defaultSampleRate"])
+            default_rate = int(info["defaultSampleRate"])
+            device_index = int(info["index"])
+
+            # Try the reported default first, then common fallbacks
+            candidates = [default_rate] + [r for r in _CANDIDATE_RATES if r != default_rate]
+            for rate in candidates:
+                try:
+                    p.is_format_supported(
+                        rate,
+                        input_device=device_index,
+                        input_channels=self.CHANNELS,
+                        input_format=self.FORMAT,
+                    )
+                    return rate
+                except ValueError:
+                    continue
         except Exception:
-            return self.SAMPLE_RATE
+            pass
+        return self.SAMPLE_RATE
 
     def start(self) -> str:
         """
@@ -76,6 +93,13 @@ class AudioCapture:
 
         self._pyaudio = pyaudio.PyAudio()
         self._capture_rate = self._detect_capture_rate(self._pyaudio)
+
+        info = self._pyaudio.get_default_input_device_info()
+        import logging
+        logging.getLogger(__name__).info(
+            f"[audio] Using device: '{info['name']}' "
+            f"(index={int(info['index'])}, rate={self._capture_rate}Hz)"
+        )
 
         self._stream = self._pyaudio.open(
             format=self.FORMAT,
@@ -115,12 +139,24 @@ class AudioCapture:
 
     def _capture_loop(self) -> None:
         """Main capture loop running in separate thread."""
+        import logging
+        logger = logging.getLogger(__name__)
+        log_every = 20  # log RMS every N chunks
+
         while not self._stop_event.is_set():
             try:
                 audio_data = self._stream.read(
                     self.CHUNK_SIZE, exception_on_overflow=False
                 )
                 chunk = self._create_chunk(audio_data)
+
+                if self._chunk_index % log_every == 0:
+                    audio = np.frombuffer(audio_data, dtype=np.int16)
+                    rms = int(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+                    if rms == 0:
+                        logger.warning("[audio] RMS=0 — capturing silence, check microphone/PulseAudio")
+                    else:
+                        logger.info(f"[audio] chunk={self._chunk_index} rms={rms}")
 
                 if self._on_chunk:
                     self._on_chunk(chunk)
@@ -130,7 +166,7 @@ class AudioCapture:
 
             except Exception as e:
                 if not self._stop_event.is_set():
-                    print(f"Audio capture error: {e}")
+                    logger.error(f"[audio] Capture error: {e}")
                 break
 
     def _create_chunk(self, audio_data: bytes) -> dict:

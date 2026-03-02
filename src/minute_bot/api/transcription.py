@@ -1,26 +1,25 @@
-"""Transcription endpoints."""
+"""Transcription processing — auto-started at server boot."""
 
 import logging
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from flask import Blueprint, jsonify, request
+from apiflask import APIBlueprint
+from flask import jsonify, request
 
 from minute_bot.audio import decode_audio_base64
 from minute_bot.config import get_settings
-from minute_bot.core import AudioBuffer, Transcriber, get_available_models
-from minute_bot.pubsub import Publisher, Subscriber
+from minute_bot.core import AudioBuffer, get_available_models
+from minute_bot.pubsub import Subscriber
+from minute_bot.services import registry
 
 logger = logging.getLogger(__name__)
 
-bp = Blueprint("transcription", __name__, url_prefix="/transcription")
+bp = APIBlueprint("transcription", __name__, url_prefix="/transcription", tag="transcription")
 
-# Module-level state
-_transcriber: Optional[Transcriber] = None
+# Internal state
 _subscriber: Optional[Subscriber] = None
-_publisher: Optional[Publisher] = None
 _is_processing = False
 _audio_buffers: dict[str, AudioBuffer] = {}
 _session_meeting_map: dict[str, str] = {}
@@ -32,16 +31,18 @@ _processing_stats = {
 }
 
 
-def _get_transcriber() -> Transcriber:
-    """Get or create transcriber instance."""
-    global _transcriber
-    if _transcriber is None:
-        _transcriber = Transcriber()
-    return _transcriber
+def _init_processing() -> None:
+    """Start the transcription subscriber. Called automatically at server startup."""
+    global _subscriber, _is_processing
+
+    _subscriber = Subscriber()
+    _subscriber.subscribe_audio(_handle_audio_chunk)
+    _subscriber.start()
+    _is_processing = True
+    logger.info("[startup:transcription] Subscriber started")
 
 
 def _get_meeting_id(session_id: str) -> Optional[str]:
-    """Get meeting ID for a session."""
     if session_id in _session_meeting_map:
         return _session_meeting_map[session_id]
 
@@ -61,7 +62,6 @@ def _get_meeting_id(session_id: str) -> Optional[str]:
 
 
 def _handle_audio_chunk(data: dict) -> None:
-    """Process incoming audio chunk."""
     global _processing_stats
 
     try:
@@ -77,26 +77,26 @@ def _handle_audio_chunk(data: dict) -> None:
 
         settings = get_settings()
         if buffer.get_duration() >= settings.transcription_buffer_duration:
+            if registry.transcriber is None:
+                logger.warning("[transcription] Whisper not yet ready, skipping chunk")
+                return
+
             audio = buffer.get_audio()
             buffer.clear()
 
-            transcriber = _get_transcriber()
-            segments = transcriber.transcribe(audio, session_id)
-
+            segments = registry.transcriber.transcribe(audio, session_id)
             meeting_id = _get_meeting_id(session_id)
 
-            if _publisher:
+            if registry.publisher:
                 for segment in segments:
                     segment["timestamp"] = datetime.now(timezone.utc).isoformat()
-                    _publisher.publish_transcript(segment)
+                    registry.publisher.publish_transcript(segment)
                     _processing_stats["segments_transcribed"] += 1
 
                     if meeting_id:
                         _persist_transcript(segment, meeting_id)
 
-            logger.debug(
-                f"Transcribed {len(segments)} segments for session {session_id}"
-            )
+            logger.debug(f"Transcribed {len(segments)} segments for session {session_id}")
 
     except Exception as e:
         _processing_stats["errors"] += 1
@@ -104,7 +104,6 @@ def _handle_audio_chunk(data: dict) -> None:
 
 
 def _persist_transcript(segment: dict, meeting_id: str) -> None:
-    """Persist transcript segment to database."""
     global _processing_stats
 
     try:
@@ -124,101 +123,40 @@ def _persist_transcript(segment: dict, meeting_id: str) -> None:
         logger.error(f"Failed to persist transcript: {e}")
 
 
-@bp.route("/start", methods=["POST"])
-def start_processing():
-    """Start transcription processing."""
-    global _subscriber, _publisher, _is_processing
-
-    if _is_processing:
-        return jsonify({"status": "already_running"}), 409
-
-    _publisher = Publisher()
-    _subscriber = Subscriber()
-    _subscriber.subscribe_audio(_handle_audio_chunk)
-    _subscriber.start()
-    _is_processing = True
-
-    # Preload model
-    _get_transcriber()
-
-    logger.info("Transcription processing started")
-    return jsonify({"status": "started"})
-
-
-@bp.route("/stop", methods=["POST"])
-def stop_processing():
-    """Stop transcription processing."""
-    global _subscriber, _is_processing
-
-    if not _is_processing:
-        return jsonify({"status": "not_running"}), 409
-
-    if _subscriber:
-        _subscriber.stop()
-
-    _is_processing = False
-    logger.info("Transcription processing stopped")
-    return jsonify({"status": "stopped"})
-
-
 @bp.route("/status", methods=["GET"])
 def get_status():
-    """Get processing status."""
+    """Diagnostic: transcription pipeline state."""
     settings = get_settings()
-    return jsonify(
-        {
-            "is_processing": _is_processing,
-            "model": settings.whisper_model,
-            "buffer_duration": settings.transcription_buffer_duration,
-            "language": settings.language,
-            "stats": _processing_stats,
-            "active_sessions": list(_audio_buffers.keys()),
-        }
-    )
+    return jsonify({
+        "is_processing": _is_processing,
+        "model": settings.whisper_model,
+        "model_status": registry.get_status().get("whisper"),
+        "buffer_duration": settings.transcription_buffer_duration,
+        "language": settings.language,
+        "stats": _processing_stats,
+        "active_sessions": list(_audio_buffers.keys()),
+    })
 
 
 @bp.route("/transcribe", methods=["POST"])
 def transcribe_endpoint():
-    """Direct transcription endpoint for testing."""
+    """Direct transcription for testing — POST {audio_data: <base64>}."""
     data = request.get_json()
 
     if not data or "audio_data" not in data:
         return jsonify({"error": "Missing audio_data"}), 400
 
+    if registry.transcriber is None:
+        return jsonify({
+            "error": "Whisper model not yet loaded",
+            "model_status": registry.get_status().get("whisper"),
+        }), 503
+
     try:
         audio = decode_audio_base64(data["audio_data"])
         session_id = data.get("session_id", str(uuid.uuid4()))
-
-        transcriber = _get_transcriber()
-        segments = transcriber.transcribe(audio, session_id)
-
-        return jsonify(
-            {
-                "session_id": session_id,
-                "segments": segments,
-                "count": len(segments),
-            }
-        )
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@bp.route("/transcripts/<meeting_id>", methods=["GET"])
-def get_transcripts(meeting_id: str):
-    """Get transcripts for a meeting."""
-    try:
-        from minute_bot.db import MinuteBotDB
-
-        db = MinuteBotDB()
-        transcripts = db.transcripts.get_by_meeting(meeting_id)
-        return jsonify(
-            {
-                "meeting_id": meeting_id,
-                "transcripts": transcripts,
-                "count": len(transcripts),
-            }
-        )
+        segments = registry.transcriber.transcribe(audio, session_id)
+        return jsonify({"session_id": session_id, "segments": segments, "count": len(segments)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -227,9 +165,4 @@ def get_transcripts(meeting_id: str):
 def list_models():
     """List available Whisper models."""
     settings = get_settings()
-    return jsonify(
-        {
-            "available": get_available_models(),
-            "current": settings.whisper_model,
-        }
-    )
+    return jsonify({"available": get_available_models(), "current": settings.whisper_model})

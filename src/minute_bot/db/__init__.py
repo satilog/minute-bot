@@ -9,6 +9,7 @@ from minute_bot.db.meetings import MeetingsDB
 from minute_bot.db.audio_files import AudioFilesDB
 from minute_bot.db.transcripts import TranscriptsDB
 from minute_bot.db.speakers import SpeakersDB
+from minute_bot.db.speaker_profiles import SpeakerProfilesDB
 from minute_bot.db.events import EventsDB
 from minute_bot.db.entities import EntitiesDB
 from minute_bot.db.relationships import RelationshipsDB
@@ -24,6 +25,7 @@ class MinuteBotDB:
         self.audio_files = AudioFilesDB(self.client)
         self.transcripts = TranscriptsDB(self.client)
         self.speakers = SpeakersDB(self.client)
+        self.speaker_profiles = SpeakerProfilesDB(self.client)
         self.events = EventsDB(self.client)
         self.entities = EntitiesDB(self.client)
         self.relationships = RelationshipsDB(self.client)
@@ -52,6 +54,7 @@ __all__ = [
     "AudioFilesDB",
     "TranscriptsDB",
     "SpeakersDB",
+    "SpeakerProfilesDB",
     "EventsDB",
     "EntitiesDB",
     "RelationshipsDB",

@@ -46,7 +46,7 @@ class Diarizer:
             logger.info("Loading pyannote diarization pipeline")
             self._pipeline = Pipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token,
+                token=self.hf_token,
             )
 
             if torch.cuda.is_available():
@@ -66,7 +66,7 @@ class Diarizer:
             logger.info("Loading speaker embedding model")
             self._embedding_model = Model.from_pretrained(
                 "pyannote/embedding",
-                use_auth_token=self.hf_token,
+                token=self.hf_token,
             )
 
             if torch.cuda.is_available():

@@ -5,6 +5,7 @@ description = "Agentic Meeting Memory System with Speaker-Aware Action Extractio
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0.0",
+    "apiflask>=2.0.0",
     "redis>=5.0.0",
     "numpy>=1.26.0",
     "pydantic>=2.0.0",
@@ -16,6 +17,7 @@ dependencies = [
     "torch>=2.0.0",
     "torchaudio>=2.0.0",
     "pyannote.audio>=3.1.0",
+    "omegaconf>=2.3.0",
 ]
 
 [project.optional-dependencies]

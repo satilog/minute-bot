@@ -2,17 +2,19 @@
 
 import logging
 
-from flask import Blueprint, jsonify
+from apiflask import APIBlueprint
+from flask import jsonify
 
 logger = logging.getLogger(__name__)
 
-bp = Blueprint("health", __name__)
+bp = APIBlueprint("health", __name__, tag="health")
 
 
 @bp.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint."""
+    """Health check endpoint — includes model initialization status."""
     from minute_bot.pubsub import get_redis_client
+    from minute_bot.services import registry
 
     redis_ok = False
     supabase_ok = False
@@ -27,17 +29,20 @@ def health():
     try:
         from minute_bot.db import get_supabase_client
 
-        client = get_supabase_client()
-        # Simple query to check connection
+        get_supabase_client()
         supabase_ok = True
     except Exception:
         pass
 
+    service_status = registry.get_status()
+    all_ready = registry.is_ready
+
     return jsonify(
         {
-            "status": "healthy",
+            "status": "ready" if all_ready else "initializing",
             "service": "minute-bot",
             "redis_connected": redis_ok,
             "supabase_connected": supabase_ok,
+            "models": service_status,
         }
     )

@@ -1,10 +1,6 @@
-version: "3.8"
-
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -39,9 +35,12 @@ services:
       # Server
       - PORT=5000
       - DEBUG=false
+      # Audio (PipeWire/PulseAudio passthrough)
+      - PULSE_SERVER=unix:/run/pulse/native
     volumes:
       - whisper_cache:/root/.cache/whisper
       - huggingface_cache:/root/.cache/huggingface
+      - /run/user/1000/pulse/native:/run/pulse/native
     depends_on:
       redis:
         condition: service_healthy
