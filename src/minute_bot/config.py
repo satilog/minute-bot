@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     audio_channel: str = "audio:chunks"
     transcript_channel: str = "transcription:segments"
     diarization_channel: str = "diarization:segments"
+    graph_channel: str = "graph:events"
 
     # Server
     port: int = 5000
@@ -36,6 +37,11 @@ class Settings(BaseSettings):
 
     # HuggingFace (for pyannote)
     hf_token: str = ""
+
+    # LLM (Anthropic)
+    anthropic_api_key: str = ""
+    llm_model: str = "claude-haiku-4-5-20251001"
+    llm_transcript_flush_seconds: float = 30.0  # flush buffer when this much audio is accumulated
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

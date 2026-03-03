@@ -22,7 +22,7 @@ class RelationshipsDB:
         relationship_type: str,
         metadata: Optional[dict] = None,
     ) -> dict:
-        """Create a relationship."""
+        """Create a relationship and publish an SSE graph event."""
         data = {
             "meeting_id": meeting_id,
             "source_entity_id": source_entity_id,
@@ -31,7 +31,14 @@ class RelationshipsDB:
             "metadata": metadata or {},
         }
         result = self.client.table(self.table).insert(data).execute()
-        return result.data[0] if result.data else {}
+        row = result.data[0] if result.data else {}
+        # Publish real-time SSE event (best-effort — never raise)
+        try:
+            from minute_bot.pubsub.graph_publisher import publish_relationship
+            publish_relationship(source_entity_id, target_entity_id, relationship_type)
+        except Exception:
+            pass
+        return row
 
     def get_by_meeting(self, meeting_id: str) -> list[dict]:
         """Get relationships for a meeting."""

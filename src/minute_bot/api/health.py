@@ -39,7 +39,7 @@ def health():
 
     return jsonify(
         {
-            "status": "ready" if all_ready else "initializing",
+            "status": "ok" if all_ready else "error",
             "service": "minute-bot",
             "redis_connected": redis_ok,
             "supabase_connected": supabase_ok,

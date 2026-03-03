@@ -50,6 +50,27 @@ class TranscriptsDB:
         )
         return result.data[0] if result.data else {}
 
+    def get_unattributed_by_meeting(self, meeting_id: str) -> list[dict]:
+        """Return transcript rows that have no speaker_id assigned yet."""
+        result = (
+            self.client.table(self.table)
+            .select("id, start_time, end_time")
+            .eq("meeting_id", meeting_id)
+            .is_("speaker_id", "null")
+            .order("start_time")
+            .execute()
+        )
+        return result.data or []
+
+    def update_speaker_batch(self, assignments: list[tuple[str, str]]) -> None:
+        """Bulk-update speaker_id on transcript rows.
+
+        Args:
+            assignments: List of (transcript_id, speaker_id) pairs.
+        """
+        for transcript_id, speaker_id in assignments:
+            self.update_speaker(transcript_id, speaker_id)
+
     def get_by_meeting(
         self,
         meeting_id: str,
@@ -58,7 +79,7 @@ class TranscriptsDB:
         """Get transcripts for a meeting."""
         query = (
             self.client.table(self.table)
-            .select("*, speakers(speaker_name)" if include_speaker else "*")
+            .select("*, speakers(speaker_label, speaker_name)" if include_speaker else "*")
             .eq("meeting_id", meeting_id)
             .order("start_time")
         )

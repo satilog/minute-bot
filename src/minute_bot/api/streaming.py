@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 bp = APIBlueprint("streaming", __name__, url_prefix="/streaming", tag="streaming")
 
-# Accumulated raw audio for end-of-meeting WAV upload
-_audio_accumulator: list = []
+# Accumulated raw audio per session for end-of-meeting WAV upload
+_audio_accumulator: dict[str, list] = {}
 _accumulator_lock = threading.Lock()
 
 
@@ -29,12 +29,13 @@ def _publish_chunk(chunk: dict) -> None:
         registry.publisher.publish_audio_chunk(chunk)
 
     if get_settings().save_audio_to_storage:
+        session_id = chunk["session_id"]
         with _accumulator_lock:
-            _audio_accumulator.append(chunk["audio_data"])
+            _audio_accumulator.setdefault(session_id, []).append(chunk["audio_data"])
 
 
 def _save_audio_to_supabase(session_id: str, meeting_id: str) -> None:
-    """Concatenate accumulated chunks and upload to Supabase Storage."""
+    """Concatenate accumulated chunks for a session and upload to Supabase Storage."""
     try:
         from minute_bot.db import MinuteBotDB
         db = MinuteBotDB()
@@ -42,8 +43,7 @@ def _save_audio_to_supabase(session_id: str, meeting_id: str) -> None:
         return
 
     with _accumulator_lock:
-        chunks = _audio_accumulator.copy()
-        _audio_accumulator.clear()
+        chunks = _audio_accumulator.pop(session_id, [])
 
     if not chunks:
         logger.warning("No audio chunks accumulated — nothing to save")

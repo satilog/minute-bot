@@ -24,7 +24,9 @@ class EventsDB:
         confidence: float = 1.0,
         source_text: Optional[str] = None,
     ) -> dict:
-        """Create an event."""
+        """Create an event and publish an SSE graph event."""
+        from datetime import datetime, timezone
+
         data = {
             "meeting_id": meeting_id,
             "event_type": event_type,
@@ -35,7 +37,19 @@ class EventsDB:
             "source_text": source_text,
         }
         result = self.client.table(self.table).insert(data).execute()
-        return result.data[0] if result.data else {}
+        row = result.data[0] if result.data else {}
+        # Publish real-time SSE event (best-effort — never raise)
+        try:
+            from minute_bot.pubsub.graph_publisher import publish_meeting_event
+            publish_meeting_event(
+                event_id=row.get("id", ""),
+                event_type=event_type,
+                description=description,
+                timestamp=row.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:
+            pass
+        return row
 
     def get_by_meeting(
         self,

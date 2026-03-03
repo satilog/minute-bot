@@ -20,17 +20,36 @@ class SpeakersDB:
         speaker_label: str,
         speaker_name: Optional[str] = None,
         voice_embedding: Optional[list[float]] = None,
+        profile_id: Optional[str] = None,
     ) -> dict:
-        """Create a speaker record."""
+        """Create a speaker record.
+
+        profile_id links this per-meeting speaker instance back to the global
+        speaker_profiles entry that was matched by voice embedding.  NULL when
+        the speaker was not recognised against any enrolled profile.
+        """
         data = {
             "meeting_id": meeting_id,
             "speaker_label": speaker_label,
             "speaker_name": speaker_name or speaker_label,
             "voice_embedding": voice_embedding,
+            "profile_id": profile_id,
             "total_speaking_time": 0,
         }
         result = self.client.table(self.table).insert(data).execute()
-        return result.data[0] if result.data else {}
+        row = result.data[0] if result.data else {}
+        # Publish real-time SSE event (best-effort — never raise)
+        try:
+            from minute_bot.pubsub.graph_publisher import publish_speaker
+            publish_speaker(
+                speaker_id=row.get("id", ""),
+                speaker_label=speaker_label,
+                speaker_name=speaker_name or speaker_label,
+                profile_matched=speaker_name is not None and speaker_name != speaker_label,
+            )
+        except Exception:
+            pass
+        return row
 
     def update_speaking_time(
         self,
@@ -62,6 +81,21 @@ class SpeakersDB:
         result = (
             self.client.table(self.table)
             .update({"speaker_name": name})
+            .eq("id", speaker_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def update_profile_match(
+        self,
+        speaker_id: str,
+        speaker_name: str,
+        profile_id: Optional[str],
+    ) -> dict:
+        """Update speaker's resolved name and linked profile after post-meeting matching."""
+        result = (
+            self.client.table(self.table)
+            .update({"speaker_name": speaker_name, "profile_id": profile_id})
             .eq("id", speaker_id)
             .execute()
         )

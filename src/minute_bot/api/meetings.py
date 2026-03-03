@@ -101,6 +101,17 @@ def stop_meeting():
     except Exception as e:
         logger.error(f"Failed to update meeting status: {e}")
 
+    # Attribute transcript chunks to their speakers in the background.
+    # Reads diarization segment timing stored during the live pipeline and
+    # matches each transcript row by time overlap.
+    # Tracks progress in meetings.speaker_attribution_status so the UI can
+    # show a "processing speakers…" indicator until the job completes.
+    try:
+        from minute_bot.core.speaker_attribution import run_attribution_async
+        run_attribution_async(meeting_id, session_id)
+    except Exception as e:
+        logger.error(f"Failed to start speaker attribution: {e}")
+
     return jsonify({
         "status": "stopped",
         "session_id": session_id,
@@ -248,6 +259,113 @@ def get_meeting_entities(meeting_id: str):
             "meeting_id": meeting_id,
             "entities": entities,
             "count": len(entities),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/<meeting_id>/processed-transcripts", methods=["GET"])
+def get_processed_transcripts(meeting_id: str):
+    """Get LLM-reflowed sentence chunks for a meeting."""
+    try:
+        from minute_bot.db import MinuteBotDB
+
+        db = MinuteBotDB()
+        transcripts = db.processed_transcripts.get_by_meeting(meeting_id)
+        return jsonify({
+            "meeting_id": meeting_id,
+            "processed_transcripts": transcripts,
+            "count": len(transcripts),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/<meeting_id>/reprocess", methods=["POST"])
+def reprocess_meeting(meeting_id: str):
+    """
+    Manually trigger post-processing for a completed meeting.
+
+    Re-runs speaker attribution for both raw transcripts and LLM-processed
+    sentences. Useful when the automatic post-processing failed or the user
+    wants to refresh speaker assignments after enrolling new profiles.
+    """
+    try:
+        from minute_bot.db import MinuteBotDB
+
+        db = MinuteBotDB()
+        meeting = db.meetings.get_by_id(meeting_id)
+        if not meeting:
+            return jsonify({"error": "Meeting not found"}), 404
+
+        session_id = meeting.get("session_id")
+        if not session_id:
+            return jsonify({"error": "Meeting has no session ID"}), 400
+
+        db.meetings.update_speaker_attribution_status(meeting_id, "pending")
+
+        from minute_bot.core.speaker_attribution import run_attribution_async
+        run_attribution_async(meeting_id, session_id)
+
+        logger.info(f"Manual reprocess triggered for meeting {meeting_id}")
+        return jsonify({"status": "processing", "meeting_id": meeting_id})
+    except Exception as e:
+        logger.error(f"Failed to start reprocessing for meeting {meeting_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/<meeting_id>/process", methods=["POST"])
+def process_meeting_graph(meeting_id: str):
+    """
+    Trigger LLM transcript cleanup and knowledge-graph extraction for a
+    completed meeting.
+
+    This is the second post-processing stage, run on explicit user request
+    (the "Process Transcript" button in the UI).  Speaker attribution must
+    already be complete before calling this endpoint.
+
+    Progress is tracked in meetings.graph_processing_status:
+        pending → processing_transcripts → processing_graph → completed | failed
+    """
+    try:
+        from minute_bot.db import MinuteBotDB
+
+        db = MinuteBotDB()
+        meeting = db.meetings.get_by_id(meeting_id)
+        if not meeting:
+            return jsonify({"error": "Meeting not found"}), 404
+
+        current_status = meeting.get("graph_processing_status")
+        if current_status in ("processing_transcripts", "processing_graph"):
+            return jsonify({
+                "error": "Graph processing already in progress",
+                "graph_processing_status": current_status,
+            }), 409
+
+        db.meetings.update_graph_processing_status(meeting_id, "pending")
+
+        from minute_bot.core.graph_processing import run_graph_processing_async
+        run_graph_processing_async(meeting_id)
+
+        logger.info(f"Graph processing triggered for meeting {meeting_id}")
+        return jsonify({"status": "processing", "meeting_id": meeting_id})
+    except Exception as e:
+        logger.error(f"Failed to start graph processing for meeting {meeting_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/<meeting_id>/relationships", methods=["GET"])
+def get_meeting_relationships(meeting_id: str):
+    """Get relationships for a meeting, used to populate the memory graph after processing."""
+    try:
+        from minute_bot.db import MinuteBotDB
+
+        db = MinuteBotDB()
+        relationships = db.relationships.get_by_meeting(meeting_id)
+        return jsonify({
+            "meeting_id": meeting_id,
+            "relationships": relationships,
+            "count": len(relationships),
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

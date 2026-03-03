@@ -4,6 +4,7 @@ import atexit
 import logging
 
 from apiflask import APIFlask
+from flask_cors import CORS
 
 from minute_bot.config import get_settings
 
@@ -16,6 +17,7 @@ def create_app() -> APIFlask:
         version="1.0.0",
         docs_ui="swagger-ui",
     )
+    CORS(app)
     app.config["SPEC_FORMAT"] = "json"
     app.info = {
         "description": (
@@ -30,6 +32,8 @@ def create_app() -> APIFlask:
         {"name": "diarization", "description": "Speaker diarization pipeline status"},
         {"name": "streaming", "description": "Audio pipeline diagnostics"},
         {"name": "health", "description": "Server and model health"},
+        {"name": "events", "description": "Real-time SSE event stream"},
+        {"name": "agent", "description": "Natural language Q&A over meeting data"},
     ]
 
     logging.basicConfig(
@@ -38,7 +42,10 @@ def create_app() -> APIFlask:
     )
 
     # Register blueprints
-    from minute_bot.api import diarization, health, meetings, profiles, streaming, transcription
+    from minute_bot.api import (
+        agent, diarization, events, health, meetings,
+        profiles, streaming, transcription,
+    )
 
     app.register_blueprint(health.bp)
     app.register_blueprint(streaming.bp)
@@ -46,6 +53,8 @@ def create_app() -> APIFlask:
     app.register_blueprint(diarization.bp)
     app.register_blueprint(meetings.bp)
     app.register_blueprint(profiles.bp)
+    app.register_blueprint(events.bp)
+    app.register_blueprint(agent.bp)
 
     # Initialize shared services (ML models load in background threads)
     from minute_bot.services import registry
@@ -53,6 +62,8 @@ def create_app() -> APIFlask:
     registry.initialize()
 
     # Auto-start pub/sub processing pipelines
+    # Note: LLM transcript processing is NOT started here — it runs post-meeting
+    # after speaker attribution completes (see core/speaker_attribution.py).
     transcription._init_processing()
     diarization._init_processing()
 

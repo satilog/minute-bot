@@ -100,14 +100,25 @@ class Diarizer:
         waveform = torch.tensor(audio_float).unsqueeze(0)
 
         # Run diarization
-        diarization = self.pipeline(
+        result = self.pipeline(
             {"waveform": waveform, "sample_rate": sample_rate},
             min_speakers=self.min_speakers,
             max_speakers=self.max_speakers,
         )
 
+        # pyannote 4.x returns DiarizeOutput; 3.x (legacy) returns Annotation directly.
+        # Use exclusive_speaker_diarization (no overlapping turns) for cleaner
+        # transcription alignment.
+        if hasattr(result, "exclusive_speaker_diarization"):
+            annotation = result.exclusive_speaker_diarization
+        elif hasattr(result, "speaker_diarization"):
+            annotation = result.speaker_diarization
+        else:
+            # pyannote 3.x / legacy mode — Annotation returned directly
+            annotation = result
+
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             segment_id = str(uuid.uuid4())
             segments.append(
                 {

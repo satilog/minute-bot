@@ -22,6 +22,13 @@ _is_processing = False
 _audio_buffers: dict[str, AudioBuffer] = {}
 _session_meeting_map: dict[str, str] = {}
 _session_speakers: dict[str, dict[str, str]] = {}
+
+# Stores diarization segment timing per session so the post-processing
+# attribution job can match transcript chunks to speakers by time overlap.
+# Each entry: {speaker_id (DB UUID), start_time (float), end_time (float)}.
+# Consumed and cleared by get_and_clear_segments() after meeting stop.
+_session_segments: dict[str, list[dict]] = {}
+
 _processing_stats = {
     "chunks_received": 0,
     "segments_processed": 0,
@@ -79,6 +86,7 @@ def _get_or_create_speaker(
     # Attempt to match this speaker against global profiles via voice embedding.
     # Only runs once per speaker label per session (result is cached above).
     resolved_name = speaker_label
+    resolved_profile_id = None
     embedding = None
 
     if audio is not None and start_time is not None and end_time is not None and registry.diarizer is not None:
@@ -95,6 +103,7 @@ def _get_or_create_speaker(
                 matches = db.speaker_profiles.find_by_embedding(embedding, threshold=0.7)
                 if matches:
                     resolved_name = matches[0]["name"]
+                    resolved_profile_id = matches[0]["id"]
                     logger.info(
                         f"Speaker {speaker_label} matched profile {resolved_name!r} "
                         f"(similarity={matches[0]['similarity']:.3f})"
@@ -111,6 +120,7 @@ def _get_or_create_speaker(
             speaker_label=speaker_label,
             speaker_name=resolved_name,
             voice_embedding=embedding,
+            profile_id=resolved_profile_id,
         )
         speaker_id = speaker.get("id")
         speakers[speaker_label] = speaker_id
@@ -165,12 +175,27 @@ def _handle_audio_chunk(data: dict) -> None:
                             _update_speaker_time(
                                 speaker_id, segment["end_time"] - segment["start_time"]
                             )
+                            # Record timing so attribution can match transcripts later
+                            _session_segments.setdefault(session_id, []).append({
+                                "speaker_id": speaker_id,
+                                "start_time": segment["start_time"],
+                                "end_time": segment["end_time"],
+                            })
 
             logger.debug(f"Diarized {len(segments)} segments for session {session_id}")
 
     except Exception as e:
         _processing_stats["errors"] += 1
         logger.error(f"Error processing chunk for diarization: {e}")
+
+
+def get_and_clear_segments(session_id: str) -> list[dict]:
+    """Return all recorded diarization segments for a session and clear them.
+
+    Called by the speaker attribution job after meeting stop.  Returns a list
+    of dicts: [{speaker_id, start_time, end_time}, ...] sorted by start_time.
+    """
+    return _session_segments.pop(session_id, [])
 
 
 def _update_speaker_time(speaker_id: str, duration: float) -> None:

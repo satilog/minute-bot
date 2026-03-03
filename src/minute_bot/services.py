@@ -60,8 +60,9 @@ class ServiceRegistry:
         self._status["whisper"] = "loading"
         logger.info("[startup:whisper] Loading Whisper model...")
         try:
-            self.transcriber = Transcriber()
-            _ = self.transcriber.model  # trigger eager load
+            t = Transcriber()
+            _ = t.model  # trigger eager load — blocks until model is in memory
+            self.transcriber = t  # only expose after model is fully ready
             self._status["whisper"] = "ready"
             logger.info("[startup:whisper] Whisper model ready")
         except Exception as e:

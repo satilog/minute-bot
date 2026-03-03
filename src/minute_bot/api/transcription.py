@@ -70,22 +70,53 @@ def _handle_audio_chunk(data: dict) -> None:
 
         if session_id not in _audio_buffers:
             _audio_buffers[session_id] = AudioBuffer()
+            logger.info("[transcription] New buffer created for session %s", session_id[:8])
 
         buffer = _audio_buffers[session_id]
         buffer.add_chunk(audio_data)
         _processing_stats["chunks_received"] += 1
 
+        duration = buffer.get_duration()
         settings = get_settings()
-        if buffer.get_duration() >= settings.transcription_buffer_duration:
+        threshold = settings.transcription_buffer_duration
+
+        logger.info(
+            "[transcription] chunk #%d received  session=%s  buffer=%.2fs/%.1fs",
+            _processing_stats["chunks_received"], session_id[:8], duration, threshold,
+        )
+
+        if duration >= threshold:
             if registry.transcriber is None:
-                logger.warning("[transcription] Whisper not yet ready, skipping chunk")
+                logger.warning("[transcription] Whisper not yet ready — dropping %.2fs of audio", duration)
+                buffer.clear()
                 return
 
             audio = buffer.get_audio()
             buffer.clear()
 
+            logger.info(
+                "[transcription] >>> TRANSCRIBING  session=%s  samples=%d  duration=%.2fs",
+                session_id[:8], len(audio), len(audio) / 16000,
+            )
+
             segments = registry.transcriber.transcribe(audio, session_id)
             meeting_id = _get_meeting_id(session_id)
+
+            if segments:
+                logger.info(
+                    "[transcription] <<< GOT %d segment(s)  session=%s  meeting=%s",
+                    len(segments), session_id[:8], (meeting_id or "unknown")[:8],
+                )
+                for i, seg in enumerate(segments):
+                    logger.info(
+                        "[transcription]   [%d] %.2f-%.2fs: %s",
+                        i, seg["start_time"], seg["end_time"], seg["text"][:120],
+                    )
+            else:
+                logger.warning(
+                    "[transcription] <<< ZERO segments returned for session=%s — "
+                    "check audio quality or model", session_id[:8],
+                )
 
             if registry.publisher:
                 for segment in segments:
@@ -96,11 +127,9 @@ def _handle_audio_chunk(data: dict) -> None:
                     if meeting_id:
                         _persist_transcript(segment, meeting_id)
 
-            logger.debug(f"Transcribed {len(segments)} segments for session {session_id}")
-
     except Exception as e:
         _processing_stats["errors"] += 1
-        logger.error(f"Error processing chunk: {e}")
+        logger.exception("[transcription] Unhandled error in chunk handler: %s", e)
 
 
 def _persist_transcript(segment: dict, meeting_id: str) -> None:
@@ -120,7 +149,7 @@ def _persist_transcript(segment: dict, meeting_id: str) -> None:
         )
         _processing_stats["segments_persisted"] += 1
     except Exception as e:
-        logger.error(f"Failed to persist transcript: {e}")
+        logger.exception("Failed to persist transcript: %s", e)
 
 
 @bp.route("/status", methods=["GET"])

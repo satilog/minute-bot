@@ -21,7 +21,7 @@ class EntitiesDB:
         entity_name: str,
         metadata: Optional[dict] = None,
     ) -> dict:
-        """Create an entity."""
+        """Create an entity and publish an SSE graph event."""
         data = {
             "meeting_id": meeting_id,
             "entity_type": entity_type,
@@ -29,7 +29,14 @@ class EntitiesDB:
             "metadata": metadata or {},
         }
         result = self.client.table(self.table).insert(data).execute()
-        return result.data[0] if result.data else {}
+        row = result.data[0] if result.data else {}
+        # Publish real-time SSE event (best-effort — never raise)
+        try:
+            from minute_bot.pubsub.graph_publisher import publish_entity
+            publish_entity(row.get("id", ""), entity_type, entity_name)
+        except Exception:
+            pass
+        return row
 
     def get_or_create(
         self,
