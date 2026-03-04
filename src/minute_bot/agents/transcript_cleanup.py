@@ -174,22 +174,31 @@ def run(
     model = AGENT_MODEL or settings.llm_model
     user_message = json.dumps(batch, ensure_ascii=False)
 
+    logger.info(
+        "[transcript_cleanup] calling LLM (model=%s, segments=%d, remainder_len=%d)",
+        model, len(batch), len(remainder),
+    )
+
+    # Let RuntimeError (e.g. missing ANTHROPIC_API_KEY) propagate — callers
+    # must handle it so processing is marked failed rather than silently empty.
+    client = get_client()
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=AGENT_MAX_TOKENS,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    raw = response.content[0].text.strip()
+    logger.info("[transcript_cleanup] raw response (first 500 chars): %r", raw[:500])
+
     try:
-        client = get_client()
-        response = client.messages.create(
-            model=model,
-            max_tokens=AGENT_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        raw = response.content[0].text.strip()
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.error("[transcript_cleanup] LLM returned invalid JSON: %s", e)
-        return [], remainder
-    except Exception as e:
-        logger.error("[transcript_cleanup] LLM call failed: %s", e)
-        return [], remainder
+        raise ValueError(
+            f"[transcript_cleanup] LLM returned invalid JSON: {e}\n"
+            f"Raw response (first 500 chars): {raw[:500]!r}"
+        ) from e
 
     sentences = parsed.get("sentences", [])
     new_remainder = parsed.get("remainder", "")
@@ -208,9 +217,9 @@ def run(
         if not isinstance(label, str) or not label.strip():
             s.pop("speaker_label", None)
 
-    logger.debug(
-        "[transcript_cleanup] %d segments → %d sentences, remainder=%r",
-        len(segments), len(valid), new_remainder[:40] if new_remainder else "",
+    logger.info(
+        "[transcript_cleanup] %d segments → %d sentences (remainder=%d chars)",
+        len(segments), len(valid), len(new_remainder),
     )
 
     return valid, new_remainder

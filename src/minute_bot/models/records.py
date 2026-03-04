@@ -103,23 +103,3 @@ class RelationshipRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class EntityMentionRecord(BaseModel):
-    """Database record for entity_mentions table."""
-
-    id: Optional[str] = None
-    entity_id: str
-    transcript_id: Optional[str] = None
-    event_id: Optional[str] = None
-    mention_text: Optional[str] = None
-    context: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class GraphSnapshotRecord(BaseModel):
-    """Database record for graph_snapshots table."""
-
-    id: Optional[str] = None
-    meeting_id: str
-    snapshot_time: float
-    snapshot_data: dict
-    created_at: datetime = Field(default_factory=datetime.utcnow)

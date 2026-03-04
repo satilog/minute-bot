@@ -14,7 +14,6 @@ from minute_bot.db.speaker_profiles import SpeakerProfilesDB
 from minute_bot.db.events import EventsDB
 from minute_bot.db.entities import EntitiesDB
 from minute_bot.db.relationships import RelationshipsDB
-from minute_bot.db.entity_mentions import EntityMentionsDB
 from minute_bot.db.triplets import TripletsDB
 from minute_bot.db.triplet_links import TripletLinksDB
 from minute_bot.db.triplet_storage import TripletStorageDB
@@ -38,7 +37,6 @@ class MinuteBotDB:
         self.events = EventsDB(self.client)
         self.entities = EntitiesDB(self.client)
         self.relationships = RelationshipsDB(self.client)
-        self.entity_mentions = EntityMentionsDB(self.client)
 
         # Triplet store
         self.triplets = TripletsDB(self.client)
@@ -114,7 +112,6 @@ __all__ = [
     "EventsDB",
     "EntitiesDB",
     "RelationshipsDB",
-    "EntityMentionsDB",
     "TripletsDB",
     "TripletLinksDB",
     "TripletStorageDB",

@@ -1,8 +1,16 @@
 """Centralized configuration for Minute Bot."""
 
 from functools import lru_cache
+from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+
+# Resolve the project root's .env relative to this file so the key is found
+# regardless of the working directory (local dev, Docker, subdir invocation).
+# config.py lives at src/minute_bot/config.py → parents[2] = project root.
+_ENV_PATH = Path(__file__).parents[2] / ".env"
+load_dotenv(_ENV_PATH, override=True)
 
 
 class Settings(BaseSettings):
@@ -43,7 +51,7 @@ class Settings(BaseSettings):
     llm_model: str = "claude-haiku-4-5-20251001"
     llm_transcript_flush_seconds: float = 30.0  # flush buffer when this much audio is accumulated
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {"env_file": str(_ENV_PATH), "extra": "ignore"}
 
 
 @lru_cache

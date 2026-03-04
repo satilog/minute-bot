@@ -12,9 +12,10 @@ Pipeline
    speaker_profiles.  Matched speakers get their profile name; unmatched ones
    are labelled "Unidentified Speaker".
 2. Attribute raw transcripts (Whisper segments) to speakers by time-overlap.
-3. Call transcript_processing.process_meeting_transcripts() which reads the
-   now-attributed raw transcripts and produces LLM-cleaned processed_transcripts
-   with speaker_id already resolved.
+3. Mark speaker_attribution_status = "completed".
+
+LLM transcript cleanup and graph extraction are NOT part of this pipeline.
+They are triggered separately via POST /meetings/<id>/process (Stage 2).
 
 Algorithm
 ---------

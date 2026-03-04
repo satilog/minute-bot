@@ -18,6 +18,7 @@ def health():
 
     redis_ok = False
     supabase_ok = False
+    anthropic_configured = False
 
     try:
         client = get_redis_client()
@@ -34,6 +35,13 @@ def health():
     except Exception:
         pass
 
+    try:
+        from minute_bot.config import get_settings
+
+        anthropic_configured = bool(get_settings().anthropic_api_key)
+    except Exception:
+        pass
+
     service_status = registry.get_status()
     all_ready = registry.is_ready
 
@@ -43,6 +51,7 @@ def health():
             "service": "minute-bot",
             "redis_connected": redis_ok,
             "supabase_connected": supabase_ok,
+            "anthropic_configured": anthropic_configured,
             "models": service_status,
         }
     )

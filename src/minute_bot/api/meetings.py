@@ -344,8 +344,8 @@ def process_meeting_graph(meeting_id: str):
 
         db.meetings.update_graph_processing_status(meeting_id, "pending")
 
-        from minute_bot.core.graph_processing import run_graph_processing_async
-        run_graph_processing_async(meeting_id)
+        from minute_bot.memory_graph import process_meeting_async
+        process_meeting_async(meeting_id)
 
         logger.info(f"Graph processing triggered for meeting {meeting_id}")
         return jsonify({"status": "processing", "meeting_id": meeting_id})

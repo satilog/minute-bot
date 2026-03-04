@@ -88,6 +88,8 @@ def process_meeting_transcripts(meeting_id: str) -> None:
     all_rows: list[dict] = []
     remainder = ""
     i = 0
+    batch_num = 0
+    failed_batches = 0
 
     while i < len(annotated):
         batch_start_time = annotated[i][1]["start_time"]
@@ -106,14 +108,33 @@ def process_meeting_transcripts(meeting_id: str) -> None:
             i += 1
             continue
 
+        batch_num += 1
+        logger.info(
+            "transcript_processing: batch %d — %d segments (t=%.1f–%.1f) for meeting %s",
+            batch_num, len(batch_segs),
+            batch_segs[0]["start_time"], batch_segs[-1]["end_time"],
+            meeting_id,
+        )
+
+        # RuntimeError (e.g. missing ANTHROPIC_API_KEY) propagates up so the
+        # caller can mark graph_processing_status = "failed" instead of silently
+        # completing with zero output.
         try:
             sentences, remainder = cleanup_segments(batch_segs, remainder=remainder)
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(
-                "transcript_processing: LLM batch failed for meeting %s: %s",
-                meeting_id, e,
+                "transcript_processing: LLM batch %d failed for meeting %s: %s",
+                batch_num, meeting_id, e,
             )
+            failed_batches += 1
             continue
+
+        logger.info(
+            "transcript_processing: batch %d → %d sentences for meeting %s",
+            batch_num, len(sentences), meeting_id,
+        )
 
         for sentence in sentences:
             # Resolve speaker_id: prefer label->id map if LLM preserved speaker_label,
@@ -147,11 +168,17 @@ def process_meeting_transcripts(meeting_id: str) -> None:
             }
         )
 
+    logger.info(
+        "transcript_processing: %d batches processed (%d failed) → %d sentences total for meeting %s",
+        batch_num, failed_batches, len(all_rows), meeting_id,
+    )
+
     if not all_rows:
-        logger.warning(
-            "transcript_processing: LLM produced no sentences for meeting %s", meeting_id
+        raise RuntimeError(
+            f"transcript_processing: LLM produced no sentences for meeting {meeting_id} "
+            f"({batch_num} batch(es) attempted, {failed_batches} failed). "
+            "Check ANTHROPIC_API_KEY and server logs."
         )
-        return
 
     try:
         db.processed_transcripts.create_batch(all_rows)
@@ -164,3 +191,4 @@ def process_meeting_transcripts(meeting_id: str) -> None:
             "transcript_processing: DB write failed for meeting %s: %s",
             meeting_id, e,
         )
+        raise

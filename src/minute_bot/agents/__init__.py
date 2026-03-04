@@ -11,4 +11,6 @@ Agents
 ------
 transcript_cleanup   Reflows raw Whisper segments into clean, complete sentences
                      while preserving multi-speaker attribution.
+
+Note: graph extraction logic lives in minute_bot.memory_graph.extraction.
 """

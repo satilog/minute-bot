@@ -1,22 +1,21 @@
-"""Agent: graph_generation
+"""LLM agent: knowledge-graph extraction from processed transcripts.
 
-Extracts a structured knowledge graph (events, entities, relationships) from
-the processed transcripts of a completed meeting.
+Reads a list of processed-transcript sentences and returns a structured
+knowledge graph containing events, entities, and relationships.
 
 Input contract
 --------------
-A JSON array of processed-transcript objects.  Each object MUST have:
+A list of processed-transcript dicts.  Each dict MUST have:
     text          str    A clean, complete sentence from the meeting
     start_time    float  Sentence start (seconds from meeting start)
     end_time      float  Sentence end
 
-Each object MAY have:
+Each dict MAY have:
     speaker_name  str    Resolved display name (e.g. "Alice") or
                          "Unidentified Speaker" if not matched
 
 Output contract
 ---------------
-Valid JSON, no markdown fences, no explanation text:
 {
   "events": [
     {
@@ -64,14 +63,11 @@ from minute_bot.llm.client import get_client
 
 logger = logging.getLogger(__name__)
 
-# ── Agent configuration ───────────────────────────────────────────────────────
+# Agent configuration
+_MODEL: Optional[str] = None   # None → use global llm_model from settings
+_MAX_TOKENS: int = 8192
 
-AGENT_MODEL: Optional[str] = None       # None → use global llm_model from settings
-AGENT_MAX_TOKENS: int = 8192
-
-# ── System prompt ─────────────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT = """\
 You are a knowledge-graph extraction engine for meeting transcripts.
 
 You receive a JSON array of processed meeting sentences.  Each sentence has a
@@ -164,8 +160,6 @@ return empty arrays.  Never invent content not present in the transcript.
 """
 
 
-# ── Agent entry point ─────────────────────────────────────────────────────────
-
 def run(transcripts: list[dict]) -> dict:
     """Extract events, entities, and relationships from processed transcripts.
 
@@ -175,14 +169,13 @@ def run(transcripts: list[dict]) -> dict:
 
     Returns:
         dict with keys 'events', 'entities', 'relationships' (each a list).
-        Returns empty dict on failure so callers can proceed gracefully.
+        Returns empty collections on failure so callers can proceed gracefully.
     """
     if not transcripts:
         return {"events": [], "entities": [], "relationships": []}
 
     settings = get_settings()
 
-    # Build input: strip DB-internal fields, keep only what the LLM needs
     input_rows = []
     for t in transcripts:
         row: dict = {
@@ -195,25 +188,34 @@ def run(transcripts: list[dict]) -> dict:
             row["speaker_name"] = speaker_name
         input_rows.append(row)
 
-    model = AGENT_MODEL or settings.llm_model
+    model = _MODEL or settings.llm_model
     user_message = json.dumps(input_rows, ensure_ascii=False)
 
+    logger.info(
+        "[memory_graph.extraction] calling LLM (model=%s, sentences=%d)",
+        model, len(input_rows),
+    )
+
+    # Let RuntimeError (e.g. missing ANTHROPIC_API_KEY) propagate — the caller
+    # in processing.py will catch it and mark graph_processing_status = "failed".
+    client = get_client()
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=_MAX_TOKENS,
+        system=_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    raw = response.content[0].text.strip()
+    logger.info("[memory_graph.extraction] raw response (first 500 chars): %r", raw[:500])
+
     try:
-        client = get_client()
-        response = client.messages.create(
-            model=model,
-            max_tokens=AGENT_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        raw = response.content[0].text.strip()
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.error("[graph_generation] LLM returned invalid JSON: %s", e)
-        return {"events": [], "entities": [], "relationships": []}
-    except Exception as e:
-        logger.error("[graph_generation] LLM call failed: %s", e)
-        return {"events": [], "entities": [], "relationships": []}
+        raise ValueError(
+            f"[memory_graph.extraction] LLM returned invalid JSON: {e}\n"
+            f"Raw response (first 500 chars): {raw[:500]!r}"
+        ) from e
 
     events = [
         e for e in parsed.get("events", [])
@@ -231,7 +233,7 @@ def run(transcripts: list[dict]) -> dict:
     ]
 
     logger.info(
-        "[graph_generation] extracted  events=%d  entities=%d  relationships=%d",
+        "[memory_graph.extraction] events=%d  entities=%d  relationships=%d",
         len(events), len(entities), len(relationships),
     )
 
